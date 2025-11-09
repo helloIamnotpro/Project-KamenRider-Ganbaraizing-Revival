@@ -6,6 +6,7 @@
 <style>
   body { font-family: sans-serif; text-align: center; margin: 20px; }
   video { border: 2px solid black; width: 320px; height: 240px; }
+  canvas { display: none; }
   img { width: 100px; margin: 5px; }
 </style>
 </head>
@@ -24,22 +25,63 @@ const references = [
   {file: "cards/diend.jpg", name: "Kamen Rider Diend"}
 ];
 
-// Function to normalize image filenames (lowercase + replace backslashes)
-function normalize(filename) {
-  return filename.toLowerCase().replace(/\\/g, "/");
-}
-
 // Start camera
 const video = document.getElementById("video");
 navigator.mediaDevices.getUserMedia({video: true})
 .then(stream => { video.srcObject = stream; })
 .catch(err => { alert("Camera error: " + err); });
 
-// Capture button
-document.getElementById("capture").addEventListener("click", () => {
-  // For demo purposes, just pick a random card
-  const card = references[Math.floor(Math.random() * references.length)];
-  document.getElementById("result").innerText = "Detected: " + card.name;
+// Helper: load image as canvas
+function loadImage(src) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = src;
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      resolve(ctx.getImageData(0,0,img.width,img.height));
+    };
+  });
+}
+
+// Compare two images using simple pixel difference
+function compareImages(img1, img2) {
+  const len = Math.min(img1.data.length, img2.data.length);
+  let diff = 0;
+  for(let i=0; i<len; i+=4){
+    diff += Math.abs(img1.data[i] - img2.data[i]);     // R
+    diff += Math.abs(img1.data[i+1] - img2.data[i+1]); // G
+    diff += Math.abs(img1.data[i+2] - img2.data[i+2]); // B
+  }
+  return diff / (len/4); // average difference per pixel
+}
+
+// Capture from webcam and detect card
+document.getElementById("capture").addEventListener("click", async () => {
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const captureData = ctx.getImageData(0,0,canvas.width,canvas.height);
+
+  let bestMatch = null;
+  let lowestDiff = Infinity;
+
+  for(const ref of references){
+    const refData = await loadImage(ref.file);
+    const diff = compareImages(captureData, refData);
+    if(diff < lowestDiff){
+      lowestDiff = diff;
+      bestMatch = ref.name;
+    }
+  }
+
+  document.getElementById("result").innerText = "Detected: " + bestMatch;
 });
 </script>
 
