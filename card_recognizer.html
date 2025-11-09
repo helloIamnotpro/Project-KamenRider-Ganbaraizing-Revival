@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kamen Rider Card Recognizer</title>
+<style>
+  body { background:#111; color:white; font-family:sans-serif; text-align:center; }
+  video, canvas { border:2px solid #555; margin:10px; border-radius:10px; }
+  button { background:#ff4444; color:white; border:none; padding:10px 20px; border-radius:10px; font-size:16px; cursor:pointer; }
+  button:hover { background:#ff6666; }
+</style>
+</head>
+<body>
+<h2>🃏 Ganbarizing Card Recognizer (Demo)</h2>
+<video id="video" width="320" height="240" autoplay></video><br>
+<button id="capture">Capture</button><br>
+<canvas id="canvas" width="320" height="240"></canvas>
+<p id="result">Waiting for capture...</p>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const result = document.getElementById('result');
+
+// Ask for webcam
+navigator.mediaDevices.getUserMedia({ video: true })
+  .then(stream => video.srcObject = stream)
+  .catch(err => alert('Camera access denied: ' + err));
+
+// References to your 3 cards (with spaces in filenames)
+const references = [
+  {file: "cards/deno rod.jpg", name: "Kamen Rider Den-O Rod Form"},
+  {file: "cards/build rabbit tank.jpg", name: "Kamen Rider Build Rabbit Tank Sparkling"},
+  {file: "cards/diend.jpg", name: "Kamen Rider Diend"}
+];
+
+document.getElementById('capture').addEventListener('click', async () => {
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  let bestMatch = null;
+  let lowestDiff = Infinity;
+
+  for (const card of references) {
+    const img = await loadImage(card.file);
+    const resized = resizeToCanvas(img, canvas);
+    const diff = compareImages(frame, resized);
+    if (diff < lowestDiff) {
+      lowestDiff = diff;
+      bestMatch = card.name;
+    }
+  }
+
+  result.textContent = bestMatch
+    ? `Closest match: ${bestMatch}`
+    : "No match found.";
+});
+
+function loadImage(path) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = path;
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+  });
+}
+
+function resizeToCanvas(img, canvas) {
+  const off = document.createElement('canvas');
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext('2d');
+  octx.drawImage(img, 0, 0, off.width, off.height);
+  return octx.getImageData(0, 0, off.width, off.height);
+}
+
+function compareImages(img1, img2) {
+  let diff = 0;
+  const d1 = img1.data, d2 = img2.data;
+  for (let i = 0; i < d1.length; i += 4) {
+    const dr = d1[i] - d2[i];
+    const dg = d1[i+1] - d2[i+1];
+    const db = d1[i+2] - d2[i+2];
+    diff += Math.abs(dr) + Math.abs(dg) + Math.abs(db);
+  }
+  return diff / (img1.width * img1.height);
+}
+</script>
+</body>
+</html>
