@@ -2,88 +2,140 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Ganbarizing Card Recognizer</title>
+<title>Ganbarizing Card Scanner</title>
 <style>
-  body { font-family: sans-serif; text-align: center; margin: 20px; }
-  video { border: 2px solid black; width: 320px; height: 240px; }
-  canvas { display: none; }
-  img { width: 100px; margin: 5px; }
+  body {
+    background: #111;
+    color: white;
+    text-align: center;
+    font-family: sans-serif;
+  }
+  video, canvas {
+    width: 80%;
+    max-width: 400px;
+    border-radius: 12px;
+    margin-top: 10px;
+  }
+  button {
+    margin-top: 15px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    background: #0f0;
+    color: black;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  button:disabled {
+    background: #444;
+    color: #888;
+    cursor: not-allowed;
+  }
+  #result {
+    margin-top: 20px;
+    font-size: 1.2em;
+    color: #0f0;
+  }
 </style>
 </head>
 <body>
-
-<h1>Ganbarizing Card Recognizer</h1>
-<video id="video" autoplay></video><br>
-<button id="capture">Capture</button>
+<h2>Ganbarizing Card Scanner</h2>
+<video id="camera" autoplay playsinline></video>
+<canvas id="snap" style="display:none;"></canvas>
+<br>
+<button id="scanBtn" disabled>📸 Scan Card</button>
+<p id="status">📷 Initializing camera...</p>
 <p id="result"></p>
 
 <script>
-// List of reference images and card names
-const references = [
-  {file: "cards/deno rod.jpg", name: "Kamen Rider Den-O Rod Form"},
-  {file: "cards/build rabbit tank.jpg", name: "Kamen Rider Build Rabbit Tank Sparkling"},
-  {file: "cards/diend.jpg", name: "Kamen Rider Diend"}
-];
+const video = document.getElementById("camera");
+const canvas = document.getElementById("snap");
+const ctx = canvas.getContext("2d");
+const scanBtn = document.getElementById("scanBtn");
+const statusText = document.getElementById("status");
+const resultText = document.getElementById("result");
 
-// Start camera
-const video = document.getElementById("video");
-navigator.mediaDevices.getUserMedia({video: true})
-.then(stream => { video.srcObject = stream; })
-.catch(err => { alert("Camera error: " + err); });
+let refs = [];
 
-// Helper: load image as canvas
-function loadImage(src) {
-  return new Promise(resolve => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = src;
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0);
-      resolve(ctx.getImageData(0,0,img.width,img.height));
-    };
-  });
-}
-
-// Compare two images using simple pixel difference
-function compareImages(img1, img2) {
-  const len = Math.min(img1.data.length, img2.data.length);
-  let diff = 0;
-  for(let i=0; i<len; i+=4){
-    diff += Math.abs(img1.data[i] - img2.data[i]);     // R
-    diff += Math.abs(img1.data[i+1] - img2.data[i+1]); // G
-    diff += Math.abs(img1.data[i+2] - img2.data[i+2]); // B
+// automatically load all files in "cards" folder
+async function loadReferences() {
+  try {
+    const res = await fetch("cards/");
+    const html = await res.text();
+    const matches = [...html.matchAll(/href="([^"]+\.(jpg|jpeg|png))"/gi)];
+    for (const m of matches) {
+      const path = "cards/" + m[1];
+      const img = new Image();
+      img.src = path;
+      await new Promise(r => img.onload = r);
+      refs.push({ name: m[1].replace(/\.[^.]+$/, ""), img });
+    }
+    console.log("Loaded", refs.length, "cards");
+  } catch (e) {
+    console.error("Could not load cards folder", e);
   }
-  return diff / (len/4); // average difference per pixel
 }
 
-// Capture from webcam and detect card
-document.getElementById("capture").addEventListener("click", async () => {
-  const canvas = document.createElement("canvas");
+async function setupCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  video.srcObject = stream;
+  return new Promise(r => video.onloadedmetadata = r);
+}
+
+// compare two images
+function compareImages(img1, img2) {
+  const w = 64, h = 64;
+  const c1 = document.createElement("canvas");
+  const c2 = document.createElement("canvas");
+  [c1.width, c1.height, c2.width, c2.height] = [w, h, w, h];
+  const x1 = c1.getContext("2d"), x2 = c2.getContext("2d");
+  x1.drawImage(img1, 0, 0, w, h);
+  x2.drawImage(img2, 0, 0, w, h);
+  const d1 = x1.getImageData(0, 0, w, h).data;
+  const d2 = x2.getImageData(0, 0, w, h).data;
+  let diff = 0;
+  for (let i = 0; i < d1.length; i += 4) {
+    diff += Math.abs(d1[i] - d2[i]) + Math.abs(d1[i+1] - d2[i+1]) + Math.abs(d1[i+2] - d2[i+2]);
+  }
+  return diff / (w*h*3);
+}
+
+async function captureAndCompare() {
+  statusText.textContent = "🔍 Scanning...";
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const captureData = ctx.getImageData(0,0,canvas.width,canvas.height);
+  ctx.drawImage(video, 0, 0);
+  const snap = new Image();
+  snap.src = canvas.toDataURL();
+  await new Promise(r => snap.onload = r);
 
-  let bestMatch = null;
-  let lowestDiff = Infinity;
-
-  for(const ref of references){
-    const refData = await loadImage(ref.file);
-    const diff = compareImages(captureData, refData);
-    if(diff < lowestDiff){
-      lowestDiff = diff;
-      bestMatch = ref.name;
+  let best = null;
+  let bestScore = Infinity;
+  for (const ref of refs) {
+    const score = compareImages(snap, ref.img);
+    if (score < bestScore) {
+      bestScore = score;
+      best = ref.name;
     }
   }
 
-  document.getElementById("result").innerText = "Detected: " + bestMatch;
-});
-</script>
+  if (best) {
+    resultText.textContent = "🃏 Best match: " + best;
+    statusText.textContent = "✅ Scan complete!";
+  } else {
+    resultText.textContent = "";
+    statusText.textContent = "❌ No cards found.";
+  }
+}
 
+(async () => {
+  await loadReferences();
+  await setupCamera();
+  statusText.textContent = "📷 Ready — hold a card up and press scan.";
+  scanBtn.disabled = false;
+})();
+
+scanBtn.addEventListener("click", captureAndCompare);
+</script>
 </body>
 </html>
